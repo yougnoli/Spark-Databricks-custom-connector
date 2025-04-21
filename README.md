@@ -8,6 +8,9 @@ This repository contains a custom Spark Data Source connector implemented in Pyt
 - Efficient HTTP session management  
 - Easy deployment to Azure Databricks (non-community edition)
 
+📄 **Full detailed guide available on Medium:**  
+[Creating Your Own Spark Databricks Connector for REST APIs: Mastering Data Ingestion with the Spark Data Source API](https://medium.com/@tugnolialessio/creating-your-own-spark-databricks-connector-for-rest-apis-mastering-data-ingestion-with-the-spark-06653f2d18d9)
+
 ---
 
 ## 📁 Folder Structure
