@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name="myrestdatasource",
-    version="0.1.0",
+    version="0.2.0",
     description="Spark Data Source for reading from a REST API",
     author="Alessio",
     author_email="alessio@email.com",
