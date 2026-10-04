@@ -6,7 +6,7 @@ This repository contains a custom Spark Data Source connector implemented in Pyt
 - Pagination across API responses, with one Spark partition fetched per page for real parallelism
 - Robust type inference and conversion
 - Efficient HTTP session management via a shared fetch helper, reused between schema inference and reading
-- Easy deployment to Azure Databricks (non-community edition)
+- Tested on **Databricks Free Edition** (serverless compute); classic clusters (e.g. Azure Databricks) are also supported
 
 📄 **Full narrative write-up on Medium:**
 [Creating Your Own Spark Databricks Connector for REST APIs: Mastering Data Ingestion with the Spark Data Source API](https://medium.com/@tugnolialessio/creating-your-own-spark-databricks-connector-for-rest-apis-mastering-data-ingestion-with-the-spark-06653f2d18d9)
@@ -17,8 +17,8 @@ This README is the technical reference: all the code and its explanation live he
 
 ## ✅ Requirements
 
-- **Spark 4.0+** (Public Preview in Databricks Runtime 15.2 and above) — the connector is built on `pyspark.sql.datasource.DataSource`, `DataSourceReader` and `InputPartition`, which don't exist on older runtimes. On an unsupported runtime, `from myrestdatasource import MyRestDataSource` will fail with an `ImportError`.
-- **`requests` installed on every cluster node**, not just the driver/notebook environment. `schema()` runs on the driver, but `read()` runs on executors — if `requests` is only `pip install`-ed in the notebook, executors will fail with `ModuleNotFoundError` the first time they fetch a page. Install it as a cluster library instead (it's already declared in `setup.py`'s `install_requires`, but that only covers the environment where the wheel itself is installed).
+- **Spark 4.0+** (Public Preview in Databricks Runtime 15.2 and above) — the connector is built on `pyspark.sql.datasource.DataSource`, `DataSourceReader` and `InputPartition`, which don't exist on older runtimes. On an unsupported runtime, `from myrestdatasource import MyRestDataSource` will fail with an `ImportError`. I tested this on Databricks Free Edition, whose serverless compute currently reports `spark.version` as `4.2.0`. [CHECK: confirm the minimum Databricks Runtime version if you're deploying on a classic, non-serverless cluster instead, since serverless doesn't expose a classic DBR number.]
+- **`requests` installed on every node that runs Spark tasks**, not just the driver/notebook environment. `schema()` runs on the driver, but `read()` runs on executors — if `requests` is only `pip install`-ed in the notebook, executors will fail with `ModuleNotFoundError` the first time they fetch a page. On classic clusters, install it as a cluster library. On Free Edition's serverless compute, installing it via `%pip install` (or shipping it inside the wheel's `install_requires`, as done here) applies to the whole serverless environment, since there's no separate driver/executor library management there.
 
 ---
 
@@ -56,7 +56,39 @@ df = (spark.read
 df.show()
 ```
 
-### How to Build and Install the Wheel
+### Installing on Databricks Free Edition (tested, primary path)
+
+Free Edition runs on serverless compute only, so there's no classic "Compute > Libraries" screen to upload a wheel to a cluster. Here's what I actually did:
+
+1. Build the wheel locally from the repo root:
+
+```bash
+python setup.py bdist_wheel
+```
+
+This produces `dist/myrestdatasource-0.2.0-py3-none-any.whl`.
+
+2. In your Free Edition workspace, open **Catalog**, pick (or create) a Unity Catalog Volume — e.g. `/Volumes/workspace/default/libraries/` — and upload the `.whl` file there through the Catalog Explorer's upload button.
+3. In a notebook cell, install it from the volume path:
+
+```python
+%pip install /Volumes/workspace/default/libraries/myrestdatasource-0.2.0-py3-none-any.whl
+```
+
+4. Restart the Python process so the new package is picked up, then import and register as usual:
+
+```python
+dbutils.library.restartPython()
+```
+
+```python
+from myrestdatasource import MyRestDataSource
+spark.dataSource.register(MyRestDataSource)
+```
+
+### Installing on Azure Databricks / classic clusters (secondary path)
+
+If you're on a classic (non-serverless) cluster instead:
 
 1. From the repo root, run:
 
@@ -65,7 +97,7 @@ python setup.py bdist_wheel
 ```
 
 2. The wheel is generated inside `dist/`.
-3. In Azure Databricks, go to **Compute > Libraries > Install New > Upload**, upload the `.whl`, and attach it to your cluster.
+3. Go to **Compute > Libraries > Install New > Upload**, upload the `.whl`, and attach it to your cluster.
 
 ---
 
@@ -145,6 +177,6 @@ If you're obtaining that token from Keycloak via a Client Credentials flow, see 
 
 This connector was built from scratch to solve repetitive tasks when ingesting data from REST APIs into Spark. It removes boilerplate code and provides a clean, production-ready interface.
 
-**Current limitations** (see the Medium article's "Future Improvements" section): there's no automatic retry or backoff on HTTP failures or rate limits, and since pagination now fetches pages in parallel across partitions, a rate limit is more likely to be hit than with a slower sequential loop.
+**Current limitations** (see the Medium article's "Tested Against Real APIs" section): there's no automatic retry or backoff on HTTP failures or rate limits, and since pagination now fetches pages in parallel across partitions, a rate limit is more likely to be hit than with a slower sequential loop. Error handling today covers malformed or missing JSON fields (nulls, unexpected nesting, missing keys) — not HTTP-level failures.
 
 ---
