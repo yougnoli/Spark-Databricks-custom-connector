@@ -152,7 +152,7 @@ if you need the remaining pages.
 
 Both `schema()` and `read()` go through a single helper, `_fetch_page(url, params, auth_token, headers, timeout)`, built on `requests.Session`. This avoids duplicating request/timeout/auth-header logic in two places, and keeps the timeout behaviour consistent between schema inference and actual reads.
 
-`headers` (parsed by `_get_headers_option`, which raises a clear `ValueError` if the option isn't valid JSON, isn't a JSON object, or contains a non-string value) is applied to the session first, then `auth_token` is applied on top as the `Authorization` header. So if `headers` happens to also define `Authorization`, `auth_token` wins — it's the more explicit, single-purpose option of the two.
+`headers` (parsed by `_get_headers_option`, which raises a clear `ValueError` if the option isn't valid JSON, isn't a JSON object, or contains a non-string value — without ever echoing the actual option value or header values back in the error message, since this is exactly where an API key would be) is applied to the session first, then `auth_token` is applied on top as the `Authorization` header. So if `headers` happens to also define `Authorization`, `auth_token` wins — it's the more explicit, single-purpose option of the two.
 
 ### A Note on Secrets
 
@@ -194,7 +194,7 @@ On **Databricks Free Edition's serverless compute**, which runs through **Spark 
 
 - `base_url`, `endpoint`: required. Combined (with a trailing slash stripped) into the request URL.
 - `auth_token`: optional. Sent as the `Authorization` header, e.g. `"Bearer xyz"`.
-- `headers`: optional. JSON object (as a string) of extra HTTP headers merged into the same session, e.g. `'{"x-api-key": "xyz"}'` — for APIs that authenticate through a header other than `Authorization`. Raises a `ValueError` if the value isn't valid JSON, isn't an object, or contains a non-string value (HTTP header values must be strings). If `headers` also sets `Authorization` and `auth_token` is set too, `auth_token` wins.
+- `headers`: optional. JSON object (as a string) of extra HTTP headers merged into the same session, e.g. `'{"x-api-key": "xyz"}'` — for APIs that authenticate through a header other than `Authorization`. Raises a `ValueError` if the value isn't valid JSON, isn't an object, or contains a non-string value (HTTP header values must be strings); the error message never echoes the option's value, to avoid leaking a key into logs over a JSON typo. If `headers` also sets `Authorization` and `auth_token` is set too, `auth_token` wins.
 - `pagination`: `"true"`/`"false"` (default `"false"`).
 - `page_param`: query parameter name used for the page number (default `"page"`).
 - `start_page`: first page number to fetch (default `1`).
