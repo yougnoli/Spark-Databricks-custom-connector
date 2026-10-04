@@ -117,14 +117,49 @@ def convert_value_to_type(value, spark_type):
     # Fallback to string conversion
     return str(value)
 
-def _fetch_page(url, params, auth_token=None, timeout=10):
+def _get_headers_option(options):
+    """
+    Parses the optional "headers" option: a JSON object (as a string) of
+    extra HTTP headers to send with every request, for APIs that expect
+    authentication (or anything else) through a header other than
+    Authorization, e.g. '{"x-api-key": "..."}'.
+
+    Raises a ValueError if the option is set but isn't valid JSON, or isn't
+    a JSON object, since HTTP headers are a flat set of name/value pairs,
+    not a list or a scalar.
+    """
+    headers_option = options.get("headers")
+    if not headers_option:
+        return None
+    try:
+        parsed = json.loads(headers_option)
+    except json.JSONDecodeError as e:
+        raise ValueError(
+            "The 'headers' option must be valid JSON, e.g. "
+            '\'{"x-api-key": "..."}\'. Got: ' + repr(headers_option)
+        ) from e
+    if not isinstance(parsed, dict):
+        raise ValueError(
+            "The 'headers' option must be a JSON object (header name/value "
+            f"pairs), not a {type(parsed).__name__}."
+        )
+    return parsed
+
+def _fetch_page(url, params, auth_token=None, headers=None, timeout=10):
     """
     Shared helper to fetch a single page of JSON data from the REST API.
     Used both by MyRestDataSource.schema() (to sample the first page while
     inferring the schema) and by MyRestDataSourceReader.read() (to fetch the
     page assigned to each partition), so the request logic isn't duplicated.
+
+    `headers` is applied first, then `auth_token` is applied as the
+    Authorization header: if `headers` also happens to include an
+    Authorization entry, `auth_token` wins, since it's the more explicit,
+    single-purpose option of the two.
     """
     with requests.Session() as session:
+        if headers:
+            session.headers.update(headers)
         if auth_token:
             session.headers.update({"Authorization": auth_token})
         resp = session.get(url, params=params, timeout=timeout)
@@ -134,14 +169,19 @@ def _fetch_page(url, params, auth_token=None, timeout=10):
 class MyRestDataSource(DataSource):
     """
     Spark Data Source V2 in Python to read any REST API.
-    Requires Spark 4.0+ (Public Preview in Databricks Runtime 15.2 and above),
-    since it relies on pyspark.sql.datasource.DataSource / DataSourceReader /
-    InputPartition.
+    Requires Spark 4.0+ (generally available on Databricks Runtime 15.4 LTS
+    and above for serverless compute; verify the minimum runtime yourself if
+    you're on a classic cluster), since it relies on
+    pyspark.sql.datasource.DataSource / DataSourceReader / InputPartition.
 
     This data source attempts to infer schema dynamically from the first
     sampled record, unless an explicit schema is provided via the "schema"
     option. It supports the following options:
         .option("auth_token", "Bearer XYZ")     # avoid hardcoding secrets, see the article
+        .option("headers", '{"x-api-key": "XYZ"}')  # extra headers, e.g. for APIs
+                                                       # that don't use Authorization;
+                                                       # if both set Authorization,
+                                                       # auth_token wins
         .option("pagination", "true")
         .option("page_param", "page")
         .option("start_page", "1")
@@ -181,6 +221,7 @@ class MyRestDataSource(DataSource):
         url = f"{base_url}/{endpoint}".rstrip("/")
 
         auth_token = self.options.get("auth_token")
+        headers = _get_headers_option(self.options)
         pagination = self.options.get("pagination", "false").lower() == "true"
         page_param = self.options.get("page_param", "page")
         start_page = int(self.options.get("start_page", 1))
@@ -190,7 +231,7 @@ class MyRestDataSource(DataSource):
         if pagination:
             params[page_param] = start_page
 
-        raw = _fetch_page(url, params, auth_token)
+        raw = _fetch_page(url, params, auth_token, headers=headers)
 
         # Apply json_path if present
         json_path = self.options.get("json_path")
@@ -259,6 +300,13 @@ class MyRestDataSourceReader(DataSourceReader):
         start_page to max_pages), so each page is fetched by a separate
         Spark task. Returns a single partition when pagination is disabled,
         since there's only one request to make.
+
+        Note that a partition is created for every page number in that
+        range regardless of whether the API actually has that many pages —
+        there's no early-stop logic. Set max_pages close to the real page
+        count: too low and the last partition's warning (see read() below)
+        tells you to raise it; too high and the connector just issues extra,
+        mostly-empty requests up to that number.
         """
         pagination = self.options.get("pagination", "false").lower() == "true"
         if not pagination:
@@ -279,6 +327,7 @@ class MyRestDataSourceReader(DataSourceReader):
         url = f"{base_url}/{endpoint}".rstrip("/")
 
         auth_token = self.options.get("auth_token")
+        headers = _get_headers_option(self.options)
         pagination = self.options.get("pagination", "false").lower() == "true"
         page_param = self.options.get("page_param", "page")
         max_pages = int(self.options.get("max_pages", 10))
@@ -298,7 +347,7 @@ class MyRestDataSourceReader(DataSourceReader):
             params = {}
             if pagination:
                 params[page_param] = page
-            raw = _fetch_page(url, params, auth_token)
+            raw = _fetch_page(url, params, auth_token, headers=headers)
             data = get_nested_value(raw, json_path)
 
         if data is None:
