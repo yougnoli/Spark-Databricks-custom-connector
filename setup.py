@@ -5,7 +5,7 @@ setup(
     version="0.2.0",
     description="Spark Data Source for reading from a REST API",
     author="Alessio",
-    author_email="alessio@email.com",
+    author_email="tugnolialessio@gmail.com",
     packages=find_packages(),
     install_requires=[
         "requests>=2.0"
