@@ -129,6 +129,11 @@ def _get_headers_option(options):
     or a scalar), or contains a non-string value — e.g. {"x-version": 1}
     would otherwise surface later as a much less clear
     requests.exceptions.InvalidHeader.
+
+    Error messages deliberately never echo the option's actual value (or
+    any header value): the "headers" option is exactly where callers put
+    API keys, and that value can otherwise end up in driver logs or in the
+    Spark UI just by making a JSON typo.
     """
     headers_option = options.get("headers")
     if not headers_option:
@@ -138,7 +143,7 @@ def _get_headers_option(options):
     except json.JSONDecodeError as e:
         raise ValueError(
             "The 'headers' option must be valid JSON, e.g. "
-            '\'{"x-api-key": "..."}\'. Got: ' + repr(headers_option)
+            '\'{"x-api-key": "..."}\'.'
         ) from e
     if not isinstance(parsed, dict):
         raise ValueError(
@@ -149,8 +154,8 @@ def _get_headers_option(options):
         if not isinstance(value, str):
             raise ValueError(
                 "The 'headers' option must contain only string values "
-                f"(HTTP header values must be strings); got {value!r} for "
-                f"key {key!r}."
+                f"(HTTP header values must be strings); the value for "
+                f"header {key!r} is a {type(value).__name__}, not a string."
             )
     return parsed
 
