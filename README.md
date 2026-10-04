@@ -19,6 +19,7 @@ This README is the technical reference: all the code and its explanation live he
 
 - **Spark 4.0+** (Public Preview in Databricks Runtime 15.2 and above) — the connector is built on `pyspark.sql.datasource.DataSource`, `DataSourceReader` and `InputPartition`, which don't exist on older runtimes. On an unsupported runtime, `from myrestdatasource import MyRestDataSource` will fail with an `ImportError`. I tested this on Databricks Free Edition, whose serverless compute currently reports `spark.version` as `4.2.0`. [CHECK: confirm the minimum Databricks Runtime version if you're deploying on a classic, non-serverless cluster instead, since serverless doesn't expose a classic DBR number.]
 - **`requests` installed on every node that runs Spark tasks**, not just the driver/notebook environment. `schema()` runs on the driver, but `read()` runs on executors — if `requests` is only `pip install`-ed in the notebook, executors will fail with `ModuleNotFoundError` the first time they fetch a page. On classic clusters, install it as a cluster library. On Free Edition's serverless compute, installing it via `%pip install` (or shipping it inside the wheel's `install_requires`, as done here) applies to the whole serverless environment, since there's no separate driver/executor library management there.
+- **`wheel` installed in whatever local Python environment you use to build the package** (`pip install wheel`). `python setup.py bdist_wheel` doesn't work out of the box — `bdist_wheel` is a command contributed by the `wheel` package itself, not by `setuptools`. Skip this and you'll hit `error: invalid command 'bdist_wheel'` instead of a `.whl` file in `dist/`. This step happens on your laptop/CI, not on Databricks, so it has nothing to do with whether you're on serverless or a classic cluster.
 
 ---
 
@@ -35,7 +36,7 @@ This README is the technical reference: all the code and its explanation live he
 
 - `setup.py`: Script for building the package.
 - `myrestdatasource/rest_datasource.py`: The full implementation of the connector.
-- `Spark-Databricks-Connector-REST-API-Test.ipynb`: Hands-on tests against real public APIs (JSONPlaceholder, ReqRes, Random User API, a Postman mock server).
+- `Spark-Databricks-Connector-REST-API-Test.ipynb`: Hands-on tests against real public APIs (JSONPlaceholder, ReqRes, Random User API, and httpbin.org's `/bearer` endpoint for token-protected auth — all of them public, with nothing to configure before running the notebook).
 
 ---
 
@@ -60,9 +61,10 @@ df.show()
 
 Free Edition runs on serverless compute only, so there's no classic "Compute > Libraries" screen to upload a wheel to a cluster. Here's what I actually did:
 
-1. Build the wheel locally from the repo root:
+1. Make sure `wheel` is installed locally, then build the wheel from the repo root:
 
 ```bash
+pip install wheel
 python setup.py bdist_wheel
 ```
 
@@ -90,9 +92,10 @@ spark.dataSource.register(MyRestDataSource)
 
 If you're on a classic (non-serverless) cluster instead:
 
-1. From the repo root, run:
+1. Make sure `wheel` is installed locally, then from the repo root run:
 
 ```bash
+pip install wheel
 python setup.py bdist_wheel
 ```
 
@@ -156,6 +159,12 @@ df = (spark.read
 ```
 
 If you're obtaining that token from Keycloak via a Client Credentials flow, see [API Authentication and Authorization with Keycloak and Data API Builder in Docker](https://medium.com/@tugnolialessio/api-authentication-and-authorization-with-keycloak-and-data-api-builder-in-docker-91ad6cf20a45) and [Implementing a Secure On-Premises API with Data API Builder, Keycloak, and SQL Server](https://medium.com/@tugnolialessio/implementing-a-secure-on-premises-api-with-data-api-builder-keycloak-and-sql-server-8d9fbed2871e).
+
+### A Note on Error Messages over Spark Connect
+
+The test notebook includes a case where the `/bearer` call is made without a token, to confirm the connector lets the resulting `401` propagate instead of swallowing it (there's no retry/backoff logic, see "Repository Goals" below). On a classic cluster, catching that error and printing it gives you a reasonably short `PYTHON_DATA_SOURCE_ERROR` with a `requests.exceptions.HTTPError` inside it.
+
+On **Databricks Free Edition's serverless compute**, which runs through **Spark Connect**, the same `except Exception as e` still catches the error, but `str(e)` can be much longer: Spark Connect embeds the full server-side execution stack (frames like `ExecuteThreadRunner`, `UCSEphemeralState`, `DBRTracing` — Databricks' own plumbing, not this connector) underneath the actual Python exception. That's expected behavior for Spark Connect, not a sign that something is broken. The notebook works around the noise by printing only the exception type and the first line of the message, which is where the real `HTTPError` text shows up. [CHECK: exact exception type and message format can vary across Databricks Runtime / Spark Connect versions.]
 
 ---
 
