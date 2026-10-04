@@ -124,9 +124,11 @@ def _get_headers_option(options):
     authentication (or anything else) through a header other than
     Authorization, e.g. '{"x-api-key": "..."}'.
 
-    Raises a ValueError if the option is set but isn't valid JSON, or isn't
-    a JSON object, since HTTP headers are a flat set of name/value pairs,
-    not a list or a scalar.
+    Raises a ValueError if the option is set but isn't valid JSON, isn't a
+    JSON object (HTTP headers are a flat set of name/value pairs, not a list
+    or a scalar), or contains a non-string value — e.g. {"x-version": 1}
+    would otherwise surface later as a much less clear
+    requests.exceptions.InvalidHeader.
     """
     headers_option = options.get("headers")
     if not headers_option:
@@ -143,6 +145,13 @@ def _get_headers_option(options):
             "The 'headers' option must be a JSON object (header name/value "
             f"pairs), not a {type(parsed).__name__}."
         )
+    for key, value in parsed.items():
+        if not isinstance(value, str):
+            raise ValueError(
+                "The 'headers' option must contain only string values "
+                f"(HTTP header values must be strings); got {value!r} for "
+                f"key {key!r}."
+            )
     return parsed
 
 def _fetch_page(url, params, auth_token=None, headers=None, timeout=10):
@@ -170,9 +179,9 @@ class MyRestDataSource(DataSource):
     """
     Spark Data Source V2 in Python to read any REST API.
     Requires Spark 4.0+ (generally available on Databricks Runtime 15.4 LTS
-    and above for serverless compute; verify the minimum runtime yourself if
-    you're on a classic cluster), since it relies on
-    pyspark.sql.datasource.DataSource / DataSourceReader / InputPartition.
+    and above, per Databricks' own GA announcement, which covers classic
+    clusters too), since it relies on pyspark.sql.datasource.DataSource /
+    DataSourceReader / InputPartition.
 
     This data source attempts to infer schema dynamically from the first
     sampled record, unless an explicit schema is provided via the "schema"
@@ -180,6 +189,7 @@ class MyRestDataSource(DataSource):
         .option("auth_token", "Bearer XYZ")     # avoid hardcoding secrets, see the article
         .option("headers", '{"x-api-key": "XYZ"}')  # extra headers, e.g. for APIs
                                                        # that don't use Authorization;
+                                                       # values must be strings;
                                                        # if both set Authorization,
                                                        # auth_token wins
         .option("pagination", "true")

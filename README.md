@@ -18,8 +18,8 @@ This README is the technical reference: all the code and its explanation live he
 
 ## ✅ Requirements
 
-- **Spark 4.0+** (generally available on Databricks Runtime 15.4 LTS and above) — the connector is built on `pyspark.sql.datasource.DataSource`, `DataSourceReader` and `InputPartition`, which don't exist on older runtimes. On an unsupported runtime, `from myrestdatasource import MyRestDataSource` will fail with an `ImportError`. I tested this on Databricks Free Edition, whose serverless compute, at the time of writing, reports `spark.version` as `4.2.0`. If you're deploying on a classic, non-serverless cluster instead, verify the minimum runtime yourself before relying on the 15.4 LTS figure — serverless compute doesn't expose a classic DBR number in the same way, so I haven't cross-checked it against one.
-- **`requests` installed on every node that runs Spark tasks**, not just the driver/notebook environment. `schema()` runs on the driver, but `read()` runs on executors — and that's true on serverless compute too, which still has a driver/executor split under the hood even without a classic cluster UI showing it. The real trap isn't `%pip install`, which does reach every node, driver and executors alike; it's `!pip install`, a shell call that only installs into the driver's Python process. If `requests` is only available that way — or only inside your local notebook environment, without being shipped via the wheel's `install_requires` as it is here — executors will fail with `ModuleNotFoundError` the first time they fetch a page. On classic clusters, install it as a cluster library instead.
+- **Spark 4.0+** (generally available on Databricks Runtime 15.4 LTS and above, per Databricks' own GA announcement — this covers classic clusters too) — the connector is built on `pyspark.sql.datasource.DataSource`, `DataSourceReader` and `InputPartition`, which don't exist on older runtimes. On an unsupported runtime, `from myrestdatasource import MyRestDataSource` will fail with an `ImportError`. I tested this on Databricks Free Edition, whose serverless compute, at the time of writing, reports `spark.version` as `4.2.0`.
+- **`requests` installed on every node that runs Spark tasks**, not just the driver/notebook environment. `schema()` runs on the driver, the reads run on executors — on serverless too. `%pip install` (or a cluster library on a classic cluster) reaches both; `!pip install` only reaches the driver, and executors then fail with `ModuleNotFoundError` the first time they fetch a page. This package ships `requests` via `install_requires`, so installing the wheel covers it either way.
 - **`wheel` installed in whatever local Python environment you use to build the package** (`pip install wheel`). `python setup.py bdist_wheel` doesn't work out of the box — `bdist_wheel` is a command contributed by the `wheel` package itself, not by `setuptools`. Skip this and you'll hit `error: invalid command 'bdist_wheel'` instead of a `.whl` file in `dist/`. This step happens on your laptop/CI, not on Databricks, so it has nothing to do with whether you're on serverless or a classic cluster.
 
 ---
@@ -115,7 +115,7 @@ The connector has two moving parts: `MyRestDataSource`, which Spark calls to get
 
 By default, the schema is inferred from the **first record** returned by the endpoint (after applying `json_path`, if set). Each key is flattened (nested objects become dotted names like `location.street.name`; arrays are kept as JSON strings) and its Spark type is guessed from the value (`infer_spark_type`): booleans, integers (`LongType`), floats (`DoubleType`), ISO-formatted date strings (`TimestampType`), and everything else as `StringType`.
 
-Because inference looks at a single record, a sparse API where that first record has a `null` in a field that's numeric elsewhere will get that column permanently typed as a string, and later numeric values will be silently coerced to strings. To avoid this, pass the `schema` option with the JSON representation of a `StructType` (e.g. `df.schema.json()` from an existing DataFrame with the shape you want) — when this option is set, `schema()` parses it directly via `StructType.fromJson(...)` and skips the API call entirely. The field names in that schema have to match the flattened field names of the endpoint you're applying it to — reusing a schema from a *different* endpoint will silently leave every unmatched column `null` rather than raising an error:
+Because inference looks at a single record, a sparse API where that first record has a `null` in a field that's numeric elsewhere will get that column permanently typed as a string, and later numeric values will be silently coerced to strings. To avoid this, pass the `schema` option with the JSON representation of a `StructType` (e.g. `df.schema.json()` from an existing DataFrame with the shape you want) — when this option is set, `schema()` parses it directly via `StructType.fromJson(...)` and skips the API call entirely:
 
 ```python
 schema_json = df.schema.json()  # df was read from the same endpoint below
@@ -127,6 +127,8 @@ df2 = (spark.read
       .option("schema", schema_json)
       .load())
 ```
+
+The field names in that schema have to match the flattened field names of the endpoint you're applying it to — reusing a schema from a *different* endpoint will silently leave every unmatched column `null` rather than raising an error.
 
 While inferring the schema, `schema()` also **caches the first page it fetched** (`self._cached_first_page`) and hands it to the reader via `reader(schema)`, so that page isn't requested a second time during `read()`.
 
@@ -148,9 +150,9 @@ if you need the remaining pages.
 
 ### Shared HTTP Fetching
 
-Both `schema()` and `read()` go through a single helper, `_fetch_page(url, params, auth_token, headers, timeout)`, built on `requests.Session`. This avoids duplicating request/timeout/auth-header logic in two places, and keeps the retry/timeout behavior consistent between schema inference and actual reads.
+Both `schema()` and `read()` go through a single helper, `_fetch_page(url, params, auth_token, headers, timeout)`, built on `requests.Session`. This avoids duplicating request/timeout/auth-header logic in two places, and keeps the timeout behaviour consistent between schema inference and actual reads.
 
-`headers` (parsed by `_get_headers_option`, which raises a clear `ValueError` if the option isn't valid JSON or isn't a JSON object) is applied to the session first, then `auth_token` is applied on top as the `Authorization` header. So if `headers` happens to also define `Authorization`, `auth_token` wins — it's the more explicit, single-purpose option of the two.
+`headers` (parsed by `_get_headers_option`, which raises a clear `ValueError` if the option isn't valid JSON, isn't a JSON object, or contains a non-string value) is applied to the session first, then `auth_token` is applied on top as the `Authorization` header. So if `headers` happens to also define `Authorization`, `auth_token` wins — it's the more explicit, single-purpose option of the two.
 
 ### A Note on Secrets
 
@@ -192,7 +194,7 @@ On **Databricks Free Edition's serverless compute**, which runs through **Spark 
 
 - `base_url`, `endpoint`: required. Combined (with a trailing slash stripped) into the request URL.
 - `auth_token`: optional. Sent as the `Authorization` header, e.g. `"Bearer xyz"`.
-- `headers`: optional. JSON object (as a string) of extra HTTP headers merged into the same session, e.g. `'{"x-api-key": "xyz"}'` — for APIs that authenticate through a header other than `Authorization`. Raises a `ValueError` if the value isn't valid JSON or isn't an object. If `headers` also sets `Authorization` and `auth_token` is set too, `auth_token` wins.
+- `headers`: optional. JSON object (as a string) of extra HTTP headers merged into the same session, e.g. `'{"x-api-key": "xyz"}'` — for APIs that authenticate through a header other than `Authorization`. Raises a `ValueError` if the value isn't valid JSON, isn't an object, or contains a non-string value (HTTP header values must be strings). If `headers` also sets `Authorization` and `auth_token` is set too, `auth_token` wins.
 - `pagination`: `"true"`/`"false"` (default `"false"`).
 - `page_param`: query parameter name used for the page number (default `"page"`).
 - `start_page`: first page number to fetch (default `1`).
