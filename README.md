@@ -11,6 +11,7 @@ This repository contains a custom Spark Data Source connector implemented in Pyt
 
 📄 **Full narrative write-up on Medium:**
 [Build Your Own Spark/Databricks Connector for REST APIs](https://medium.com/@tugnolialessio/build-your-own-spark-databricks-connector-for-rest-apis-06653f2d18d9)
+
 📄 **And on my website:**
 [Build Your Own Spark/Databricks Connector for REST APIs](https://www.tugnolialessio.com/blog/spark-databricks-connector-rest-apis/)
 
