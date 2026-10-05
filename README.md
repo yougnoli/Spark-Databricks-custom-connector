@@ -11,6 +11,8 @@ This repository contains a custom Spark Data Source connector implemented in Pyt
 
 📄 **Full narrative write-up on Medium:**
 [Build Your Own Spark/Databricks Connector for REST APIs](https://medium.com/@tugnolialessio/build-your-own-spark-databricks-connector-for-rest-apis-06653f2d18d9)
+📄 **And on my website:**
+[Build Your Own Spark/Databricks Connector for REST APIs](https://www.tugnolialessio.com/blog/spark-databricks-connector-rest-apis/)
 
 This README is the technical reference: all the code and its explanation live here and in `myrestdatasource/rest_datasource.py`.
 
@@ -180,8 +182,6 @@ df = (spark.read
       .load())
 ```
 
-If you're obtaining that token from Keycloak via a Client Credentials flow, see [API Authentication and Authorization with Keycloak and Data API Builder in Docker](https://medium.com/@tugnolialessio/api-authentication-and-authorization-with-keycloak-and-data-api-builder-in-docker-91ad6cf20a45) and [Implementing a Secure On-Premises API with Data API Builder, Keycloak, and SQL Server](https://medium.com/@tugnolialessio/implementing-a-secure-on-premises-api-with-data-api-builder-keycloak-and-sql-server-8d9fbed2871e).
-
 ### A Note on Error Messages over Spark Connect
 
 The test notebook includes a case where the `/bearer` call is made without a token, to confirm the connector lets the resulting `401` propagate instead of swallowing it (there's no retry/backoff logic, see "Repository Goals" below). On a classic cluster, catching that error and printing it gives you a reasonably short `PYTHON_DATA_SOURCE_ERROR` with a `requests.exceptions.HTTPError` inside it.
@@ -209,6 +209,6 @@ On **Databricks Free Edition's serverless compute**, which runs through **Spark 
 
 This connector was built from scratch to solve repetitive tasks when ingesting data from REST APIs into Spark. It removes boilerplate code and provides a clean, production-ready interface.
 
-**Current limitations** (see the Medium article's "Tested Against Real APIs" section): there's no automatic retry or backoff on HTTP failures or rate limits, and since pagination now fetches pages in parallel across partitions, a rate limit is more likely to be hit than with a slower sequential loop. Error handling today covers malformed or missing JSON fields (nulls, unexpected nesting, missing keys) — not HTTP-level failures. The `headers` option covers static, pre-obtained credentials (an API key you already have); there's no support for token refresh, signing, or anything dynamic beyond what you pass in yourself.
+**Current limitations** (see the article's "Tested Against Real APIs" section): there's no automatic retry or backoff on HTTP failures or rate limits, and since pagination now fetches pages in parallel across partitions, a rate limit is more likely to be hit than with a slower sequential loop. Error handling today covers malformed or missing JSON fields (nulls, unexpected nesting, missing keys) — not HTTP-level failures. The `headers` option covers static, pre-obtained credentials (an API key you already have); there's no support for token refresh, signing, or anything dynamic beyond what you pass in yourself.
 
 ---
